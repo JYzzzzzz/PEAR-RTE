@@ -12,7 +12,7 @@
 
 2. (optional) Adjust parameters in `run.py` and `script_run.sh`, especially the *output_dir*
 
-3. Run (train, eval and test)
+3. Run
 ``` shell
 bash script_run.sh
 ```
