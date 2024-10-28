@@ -1,6 +1,11 @@
 """
 更新说明：除了从label、pred中提取主客体那一部分。其他部分发生任何改动，version更新。
 
+version: 241008
+    -- 修改了默认的 pretrain model 路径
+    -- 目前在llama-factory生成的qwen、glm的结果，都使用 evaluate_1_checkpoint__for_t5
+    -- 添加了 evaluate_1_checkpoint__for_PRGC
+    -- 修改了对 complex scenario 的统计框架，将它们放到了一个函数中
 version: 240923
     -- 添加了 evaluate_1_checkpoint__for_t5
 version: 240920
@@ -64,7 +69,7 @@ python3 get_score.py \
 """ t5
 python get_score.py \
     --MODEL_NAME="t5" \
-    --PRETRAIN_MODEL_DIR="E:/JYZ_projects_python/J231014_MobileMatch/projects_for_paper/ner_code_231117/lib/prev_trained_model/chinese-bert-wwm-ext" \
+    --PRETRAIN_MODEL_DIR="E:/JYZ_projects_python/J231014_MobileMatch/projects_for_paper/ner_code_231117/pretrain/chinese-bert-wwm-ext" \
     --DATASET_DIR="data/CMIM23-NOM1-RA" \
     --LABEL_FILENAME_dev="valid_data.json" --LABEL_FILENAME_test="test_data.json"\
     --OUTPUT_DIR="output/240921_Randeng77M_roseos" \
@@ -75,27 +80,30 @@ python get_score.py \
 
 """
 
+
+
 parser = argparse.ArgumentParser()
 
 # ---------- 任务
 parser.add_argument('--MODEL_NAME', type=str, default="ours",
                     choices=['ours', 'SPN', 'BiRTE', 'tplinker', 'UniRel', 'OneRel',
-                             't5'])
+                             't5', 'PRGC'])
 parser.add_argument('--STATISTIC_RANGE', type=str, default="all")
 """ ^^^ STATISTIC_RANGE 统计范围
--- all：对比所有样本所有三元组，输出 p，r，f1
--- segmented_entity：对比所有样本中，含分段实体的三元组，p,r,f1结果有意义。
-                其中 p 以模型预测得到的含分段实体的三元组数量为分母；
--- triple_num(?,??)：挑选三元组数量范围为 ? <= triple_num < ?? 的样本，p,r,f1结果有意义。
--- EPO：统计 entity pair overlapping ，但是这种情况的样本量太少了，参考价值有限。
--- SEO_sample: 挑选 含SingleEntityOverlapping 的样本，p,r,f1结果有意义。
--- SEO_triple: 仅统计 SingleEntityOverlapping 的三元组， 仅r有意义。
--- sent_len(?,??): 挑选句子长度范围为 ? <= sent_len < ?? 的样本，p,r,f1结果有意义。
--- entity_len(?,??): 仅统计 实体长度在一定范围内 的三元组， p,r,f1结果有意义。
--- segment_num(?,??): 仅统计 实体段数在一定范围内 的三元组， 仅r有意义。
--- pred_del_seg_ent: 删除ourmodel的预测的含 segmented entity 的三元组
-
-以上参数可进行组合，能进一步减小统计范围
+    -- all：对比所有样本所有三元组，输出 p，r，f1
+    -- segmented_entity：对比所有样本中，含分段实体的三元组，p,r,f1结果有意义。
+                    其中 p 以模型预测得到的含分段实体的三元组数量为分母；
+    -- triple_num(?,??)：挑选三元组数量范围为 ? <= triple_num < ?? 的样本，p,r,f1结果有意义。
+    -- EPO：统计 entity pair overlapping ，但是这种情况的样本量太少了，参考价值有限。
+    -- SEO_sample: 挑选 含SingleEntityOverlapping 的样本，p,r,f1结果有意义。
+    -- SEO_triple: 仅统计 SingleEntityOverlapping 的三元组， 仅r有意义。
+    -- Normal
+    -- sent_len(?,??): 挑选句子长度范围为 ? <= sent_len < ?? 的样本，p,r,f1结果有意义。
+    -- entity_len(?,??): 仅统计 实体长度在一定范围内 的三元组， p,r,f1结果有意义。
+    -- segment_num(?,??): 仅统计 实体段数在一定范围内 的三元组， 仅r有意义。
+    -- pred_del_seg_ent: 删除ourmodel的预测的含 segmented entity 的三元组
+    
+    以上参数可进行组合，能进一步减小统计范围
 """
 
 # ---------- 预测文件
@@ -113,8 +121,8 @@ parser.add_argument('--DATASET_DIR', type=str, default="dataset/CMIM23-NOM1-RA")
 parser.add_argument('--LABEL_FILENAME_dev', type=str, default="valid_data.json")
 parser.add_argument('--LABEL_FILENAME_test', type=str, default="test_data.json")
 
-parser.add_argument('--PRETRAIN_MODEL_DIR', type=str, default="lib/prev_trained_model/chinese-bert-wwm-ext")
-# parser.add_argument('--PRETRAIN_MODEL_DIR', type=str, default="lib/prev_trained_model/bert-base-cased")
+parser.add_argument('--PRETRAIN_MODEL_DIR', type=str, default="pretrain/chinese-bert-wwm-ext")
+# parser.add_argument('--PRETRAIN_MODEL_DIR', type=str, default="pretrain/bert-base-cased")
 
 # rouge
 parser.add_argument('--USE_ROUGE', type=bool, default=False)
@@ -604,27 +612,14 @@ def evaluate_1_checkpoint__for_ourmodel(predict_file, label_file, tokenizer):
 
     all_samples_triples_label = []
     all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
     pred_data_i = 0
     for d_i in range(len(label_data)):  # 遍历标签
-
-        # 判断样本中的三元组数量，保留符合要求的
-        if "triple_num" in args_global.STATISTIC_RANGE:
-            value = eval(span_find(args_global.STATISTIC_RANGE, "triple_num", ")")[0] + ")")
-            if if_label_triple_num_in_range(label_data[d_i]['relation_list'], value) is False:
-                continue
-        # elif "sent_len" in args_global.STATISTIC_RANGE:
-        #     if if_sent_len_in_range(
-        #             label_data[d_i]['text'], tokenizer,
-        #             eval(args_global.STATISTIC_RANGE[8:])) is False:
-        #         continue
-        # elif args_global.STATISTIC_RANGE == 'EPO':  # EPO situation, 太少了
-        #     entity_epo_list = if_sample_has_EPO(label_data[d_i]['relation_list'])
-        #     if len(entity_epo_list) == 0:
-        #         continue
-        if 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
-            entity_seo_list = if_sample_has_SEO(label_data[d_i]['relation_list'])
-            if len(entity_seo_list) == 0:
-                continue
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [],
+        }    # output for complex scenarios
 
         # -------------------- process label
         triples_label_with_pos = label_data[d_i]['relation_list'].copy()
@@ -637,22 +632,6 @@ def evaluate_1_checkpoint__for_ourmodel(predict_file, label_file, tokenizer):
             obj_str = triple_str_pos['object']
             subj_char_span = triple_str_pos['subj_char_span']
             obj_char_span = triple_str_pos['obj_char_span']
-
-            if "segmented_entity" in args_global.STATISTIC_RANGE:
-                if len(subj_char_span) == 1 and len(obj_char_span) == 1:  # 不含分段实体
-                    continue
-            if "segment_num" in args_global.STATISTIC_RANGE:
-                segment_num = max([len(subj_char_span), len(obj_char_span)])
-                range_value = eval(span_find(args_global.STATISTIC_RANGE, "segment_num", ")")[0] + ")")
-                if if_segment_num_in_range(segment_num, range_value) is False:
-                    continue
-            if args_global.STATISTIC_RANGE == "SEO_triple":  # 统计SEO情况的三元组的召回率
-                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
-                    continue
-            if "entity_len" in args_global.STATISTIC_RANGE:
-                value = eval(span_find(args_global.STATISTIC_RANGE, "entity_len", ")")[0] + ")")
-                if if_entity_len_in_range([subj_str, obj_str], tokenizer, value) is False:
-                    continue
 
             triple_info = {}
             if 'nyt' in args_global.DATASET_DIR:
@@ -684,18 +663,6 @@ def evaluate_1_checkpoint__for_ourmodel(predict_file, label_file, tokenizer):
             subj_char_span = triple_str_pos[1]
             obj_char_span = triple_str_pos[2]
 
-            if "segmented_entity" in args_global.STATISTIC_RANGE:
-                if len(subj_char_span) == 1 and len(obj_char_span) == 1:  # 不含分段实体
-                    continue
-            if "entity_len" in args_global.STATISTIC_RANGE:
-                value = eval(span_find(args_global.STATISTIC_RANGE, "entity_len", ")")[0] + ")")
-                if if_entity_len_in_range([subj_str, obj_str], tokenizer, value) is False:
-                    continue
-            if "pred_del_seg_ent" in args_global.STATISTIC_RANGE:
-                # 删除预测结果中的所有含分段实体的三元组
-                if len(subj_char_span) > 1 or len(obj_char_span) > 1:
-                    continue
-
             triple_info = {}
             if 'nyt' in args_global.DATASET_DIR:
                 triple_info['subj'] = subj_str.split()[-1].lower()  # 实体取最后一个单词
@@ -715,6 +682,10 @@ def evaluate_1_checkpoint__for_ourmodel(predict_file, label_file, tokenizer):
                 triple_info['obj'] = obj_str
             if triple_info not in triples_pred:
                 triples_pred.append(triple_info)
+                triple_info1 = triple_info.copy()
+                triple_info1['subj_char_span'] = subj_char_span.copy()
+                triple_info1['obj_char_span'] = obj_char_span.copy()
+                sample_out['triples_pred'].append(triple_info1)
 
         # if data_i < 3:
         #     print(f"triples_label{data_i} = {triples_label}")
@@ -725,6 +696,7 @@ def evaluate_1_checkpoint__for_ourmodel(predict_file, label_file, tokenizer):
         # triples_pred_str = list(set(triples_pred_str))
         all_samples_triples_label.append(triples_label.copy())
         all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
         """
         all_samples_triples_label = [
             [{'subj': ?, 'rela': ?, 'obj': ?}, {}, ...],
@@ -735,13 +707,10 @@ def evaluate_1_checkpoint__for_ourmodel(predict_file, label_file, tokenizer):
     # input format:
     # print(all_samples_triples_pred[10])
     # print(all_samples_triples_label[10])
-    print(f"-- sample_num={len(all_samples_triples_label)}")
-    print(f"-- label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
-          f"pred_triple_num={sum([len(triples) for triples in all_samples_triples_pred])}")
     p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
                                args=args_global, tokenizer=tokenizer)
     res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
-    return res_triple
+    return res_triple, all_samples_triples_pred_label_output
 
 
 def evaluate_1_checkpoint__for_BiRTE(predict_file, label_file, tokenizer):
@@ -766,19 +735,14 @@ def evaluate_1_checkpoint__for_BiRTE(predict_file, label_file, tokenizer):
 
     all_samples_triples_label = []
     all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
     pred_data_i = 0
     for d_i in range(len(label_data)):  # 遍历标签
-
-        # 判断样本中的三元组数量，保留符合要求的
-        if "triple_num" in args_global.STATISTIC_RANGE:
-            if if_label_triple_num_in_range(
-                    label_data[d_i]['relation_list'],
-                    eval(args_global.STATISTIC_RANGE[10:])) is False:
-                continue
-        elif 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
-            entity_seo_list = if_sample_has_SEO(label_data[d_i]['relation_list'])
-            if len(entity_seo_list) == 0:
-                continue
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [],
+        }    # output for complex scenarios
 
         # -------------------- process label
         triples_label_with_pos = label_data[d_i]['relation_list'].copy()
@@ -791,15 +755,6 @@ def evaluate_1_checkpoint__for_BiRTE(predict_file, label_file, tokenizer):
             obj_str = triple_str_pos['object']
             subj_char_span = triple_str_pos['subj_char_span']
             obj_char_span = triple_str_pos['obj_char_span']
-
-            if args_global.STATISTIC_RANGE == "SEO_triple":  # 统计SEO情况的三元组的召回率
-                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
-                    continue
-            elif "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
 
             triple_info = {}
             if 'nyt' in args_global.DATASET_DIR:
@@ -826,15 +781,10 @@ def evaluate_1_checkpoint__for_BiRTE(predict_file, label_file, tokenizer):
             rela_str = triple_str[1]
             obj_str = triple_str[2]
 
-            if "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_pred:
                 triples_pred.append(triple_info)
+                sample_out['triples_pred'].append(triple_info)
 
         # if data_i < 3:
         #     print(f"triples_label{data_i} = {triples_label}")
@@ -845,6 +795,7 @@ def evaluate_1_checkpoint__for_BiRTE(predict_file, label_file, tokenizer):
         # triples_pred_str = list(set(triples_pred_str))
         all_samples_triples_label.append(triples_label.copy())
         all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
         """
         all_samples_triples_label = [
             [{'subj': ?, 'rela': ?, 'obj': ?}, {}, ...],
@@ -852,13 +803,10 @@ def evaluate_1_checkpoint__for_BiRTE(predict_file, label_file, tokenizer):
         ]
         """
 
-    print(f"-- sample_num={len(all_samples_triples_label)}")
-    print(f"-- label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
-          f"pred_triple_num={sum([len(triples) for triples in all_samples_triples_pred])}")
     p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
                                args=args_global, tokenizer=tokenizer)
     res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
-    return res_triple
+    return res_triple, all_samples_triples_pred_label_output
 
 
 def evaluate_1_checkpoint__for_SPN(predict_file, label_file, tokenizer):
@@ -880,18 +828,13 @@ def evaluate_1_checkpoint__for_SPN(predict_file, label_file, tokenizer):
     # -------------------- 遍历 label_data，获取结构化样本信息
     all_samples_triples_label = []
     all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
     for d_i in range(len(label_data)):  # 遍历标签
-
-        # 判断样本中的三元组数量，保留符合要求的
-        if "triple_num" in args_global.STATISTIC_RANGE:
-            if if_label_triple_num_in_range(
-                    label_data[d_i]['relation_list'],
-                    eval(args_global.STATISTIC_RANGE[10:])) is False:
-                continue
-        elif 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
-            entity_seo_list = if_sample_has_SEO(label_data[d_i]['relation_list'])
-            if len(entity_seo_list) == 0:
-                continue
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [],
+        }    # output for complex scenarios
 
         # # -------------------- label
         # text_id = label_data[data_i]['id']
@@ -922,15 +865,6 @@ def evaluate_1_checkpoint__for_SPN(predict_file, label_file, tokenizer):
             subj_char_span = triple_str_pos['subj_char_span']
             obj_char_span = triple_str_pos['obj_char_span']
 
-            if args_global.STATISTIC_RANGE == "SEO_triple":  # 统计SEO情况的三元组的召回率
-                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
-                    continue
-            elif "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_label:
                 triples_label.append(triple_info)
@@ -943,15 +877,10 @@ def evaluate_1_checkpoint__for_SPN(predict_file, label_file, tokenizer):
             rela_str = triple_str["predicate"]
             obj_str = triple_str["object"]
 
-            if "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_pred:
                 triples_pred.append(triple_info)
+                sample_out['triples_pred'].append(triple_info)
         # triples_pred_0 = predict_data['pred'][str(data_i)].copy()
         # tokens_id = tokenizer.encode(text, add_special_tokens=True)
         # triples_pred = []
@@ -981,14 +910,12 @@ def evaluate_1_checkpoint__for_SPN(predict_file, label_file, tokenizer):
 
         all_samples_triples_label.append(triples_label.copy())
         all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
 
-    print(f"-- sample_num={len(all_samples_triples_label)}")
-    print(f"-- label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
-          f"pred_triple_num={sum([len(triples) for triples in all_samples_triples_pred])}")
     p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
                                args=args_global, tokenizer=tokenizer)
     res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
-    return res_triple
+    return res_triple, all_samples_triples_pred_label_output
 
 
 def evaluate_1_checkpoint__for_TPLinker(predict_file, label_file, tokenizer):
@@ -1062,19 +989,14 @@ def evaluate_1_checkpoint__for_TPLinker(predict_file, label_file, tokenizer):
 
     all_samples_triples_label = []
     all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
     pred_data_i = 0
     for d_i in range(len(label_data)):  # 遍历标签
-
-        # 判断样本中的三元组数量，保留符合要求的
-        if "triple_num" in args_global.STATISTIC_RANGE:
-            if if_label_triple_num_in_range(
-                    label_data[d_i]['relation_list'],
-                    eval(args_global.STATISTIC_RANGE[10:])) is False:
-                continue
-        elif 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
-            entity_seo_list = if_sample_has_SEO(label_data[d_i]['relation_list'])
-            if len(entity_seo_list) == 0:
-                continue
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [],
+        }    # output for complex scenarios
 
         # -------------------- process label
         if tplinker_dataset_old_version:
@@ -1098,15 +1020,6 @@ def evaluate_1_checkpoint__for_TPLinker(predict_file, label_file, tokenizer):
                 subj_char_span = triple_str_pos['subj_char_span']
                 obj_char_span = triple_str_pos['obj_char_span']
 
-            if args_global.STATISTIC_RANGE == "SEO_triple":  # 统计SEO情况的三元组的召回率
-                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
-                    continue
-            elif "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_label:
                 triples_label.append(triple_info)
@@ -1119,18 +1032,14 @@ def evaluate_1_checkpoint__for_TPLinker(predict_file, label_file, tokenizer):
             rela_str = triple_str["predicate"]
             obj_str = triple_str["object"]
 
-            if "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_pred:
                 triples_pred.append(triple_info)
+                sample_out['triples_pred'].append(triple_info)
 
         all_samples_triples_label.append(triples_label.copy())
         all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
         """
         all_samples_triples_label = [
             [{'subj': ?, 'rela': ?, 'obj': ?}, {}, ...],
@@ -1138,13 +1047,10 @@ def evaluate_1_checkpoint__for_TPLinker(predict_file, label_file, tokenizer):
         ]
         """
 
-    print(f"-- sample_num={len(all_samples_triples_label)}")
-    print(f"-- label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
-          f"pred_triple_num={sum([len(triples) for triples in all_samples_triples_pred])}")
     p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
                                args=args_global, tokenizer=tokenizer)
     res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
-    return res_triple
+    return res_triple, all_samples_triples_pred_label_output
 
 
 def evaluate_1_checkpoint__for_UniRel(predict_file, label_file, tokenizer):
@@ -1158,18 +1064,13 @@ def evaluate_1_checkpoint__for_UniRel(predict_file, label_file, tokenizer):
     # -------------------- 遍历 label_data，获取结构化样本信息
     all_samples_triples_label = []
     all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
     for d_i in range(len(label_data)):  # 遍历标签
-
-        # 判断样本中的三元组数量，保留符合要求的
-        if "triple_num" in args_global.STATISTIC_RANGE:
-            if if_label_triple_num_in_range(
-                    label_data[d_i]['relation_list'],
-                    eval(args_global.STATISTIC_RANGE[10:])) is False:
-                continue
-        elif 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
-            entity_seo_list = if_sample_has_SEO(label_data[d_i]['relation_list'])
-            if len(entity_seo_list) == 0:
-                continue
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [],
+        }    # output for complex scenarios
 
         # -------------------- label
         triples_label_with_pos = label_data[d_i]['relation_list'].copy()
@@ -1183,15 +1084,6 @@ def evaluate_1_checkpoint__for_UniRel(predict_file, label_file, tokenizer):
             subj_char_span = triple_str_pos['subj_char_span']
             obj_char_span = triple_str_pos['obj_char_span']
 
-            if args_global.STATISTIC_RANGE == "SEO_triple":  # 统计SEO情况的三元组的召回率
-                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
-                    continue
-            elif "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_label:
                 triples_label.append(triple_info)
@@ -1204,26 +1096,75 @@ def evaluate_1_checkpoint__for_UniRel(predict_file, label_file, tokenizer):
             rela_str = triple_str["predicate"]
             obj_str = triple_str["object"]
 
-            if "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
+            triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
+            if triple_info not in triples_pred:
+                triples_pred.append(triple_info)
+                sample_out['triples_pred'].append(triple_info)
+
+        all_samples_triples_label.append(triples_label.copy())
+        all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
+
+    p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
+                               args=args_global, tokenizer=tokenizer)
+    res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
+    return res_triple, all_samples_triples_pred_label_output
+
+
+def evaluate_1_checkpoint__for_PRGC(predict_file, label_file, tokenizer):
+    # 对一个checkpoint的一个train、dev、test中之一的数据进行验证打分
+    with open(predict_file, 'r', encoding='UTF-8') as f:
+        predict_data = json.loads(f.read())
+    with open(label_file, 'r', encoding='UTF-8') as f:
+        label_data = json.loads(f.read())
+    assert len(predict_data) == len(label_data)
+
+    # -------------------- 遍历 label_data，获取结构化样本信息
+    all_samples_triples_label = []
+    all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
+    for d_i in range(len(label_data)):  # 遍历标签
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [],
+        }
+
+        # -------------------- label
+        triples_label_with_pos = label_data[d_i]['relation_list'].copy()
+        # ^^^ { "subject": ?, "predicate": ?, "object": ?,
+        #       "subj_char_span": ?, "obj_char_span": ?},
+        triples_label = []
+        for triple_str_pos in triples_label_with_pos:
+            subj_str = triple_str_pos['subject']
+            rela_str = triple_str_pos['predicate']
+            obj_str = triple_str_pos['object']
+            subj_char_span = triple_str_pos['subj_char_span']
+            obj_char_span = triple_str_pos['obj_char_span']
+
+            triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
+            if triple_info not in triples_label:
+                triples_label.append(triple_info)
+
+        # -------------------- process prediction
+        triples_pred_in = predict_data[d_i]['triples_pred_list'].copy()
+        triples_pred = []
+        for triple_str in triples_pred_in:
+            subj_str, rela_str, obj_str = triple_str.split("[sep]")
 
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_pred:
                 triples_pred.append(triple_info)
+                sample_out['triples_pred'].append(triple_info)
 
         all_samples_triples_label.append(triples_label.copy())
         all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
 
-    print(f"-- sample_num={len(all_samples_triples_label)}")
-    print(f"-- label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
-          f"pred_triple_num={sum([len(triples) for triples in all_samples_triples_pred])}")
     p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
                                args=args_global, tokenizer=tokenizer)
     res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
-    return res_triple
+    return res_triple, all_samples_triples_pred_label_output
 
 
 def evaluate_1_checkpoint__for_OneRel(predict_file, label_file, tokenizer):
@@ -1242,18 +1183,14 @@ def evaluate_1_checkpoint__for_OneRel(predict_file, label_file, tokenizer):
     # -------------------- 遍历 label_data，获取结构化样本信息
     all_samples_triples_label = []
     all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
     for d_i in range(len(label_data)):  # 遍历标签
-
-        # 判断样本中的三元组数量，保留符合要求的
-        if "triple_num" in args_global.STATISTIC_RANGE:
-            if if_label_triple_num_in_range(
-                    label_data[d_i]['relation_list'],
-                    eval(args_global.STATISTIC_RANGE[10:])) is False:
-                continue
-        elif 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
-            entity_seo_list = if_sample_has_SEO(label_data[d_i]['relation_list'])
-            if len(entity_seo_list) == 0:
-                continue
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            # 'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_label': [],
+            'triples_pred': [],
+        }    # output for complex scenarios
 
         # -------------------- label
         triples_label_with_pos = label_data[d_i]['relation_list'].copy()
@@ -1275,18 +1212,13 @@ def evaluate_1_checkpoint__for_OneRel(predict_file, label_file, tokenizer):
             obj_str = process_after_tokenize_decode(obj_str)
             obj_str = obj_str.replace('[UNK]', '?')
 
-            if args_global.STATISTIC_RANGE == "SEO_triple":  # 统计SEO情况的三元组的召回率
-                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
-                    continue
-            elif "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_label:
                 triples_label.append(triple_info)
+                sample_out['triples_label'].append({
+                    'subject': subj_str, 'predicate': rela_str, 'object': obj_str,
+                    'subj_char_span': subj_char_span.copy(), 'obj_char_span': obj_char_span.copy()
+                })
 
         # -------------------- process prediction
         triples_pred_in = predict_data[d_i]['triple_list_pred'].copy()
@@ -1300,26 +1232,25 @@ def evaluate_1_checkpoint__for_OneRel(predict_file, label_file, tokenizer):
             subj_str = subj_str.replace('[UNK]', '?')
             obj_str = obj_str.replace('[UNK]', '?')
 
-            if "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
+            # if "entity_len" in args_global.STATISTIC_RANGE:
+            #     if if_entity_len_in_range(
+            #             [subj_str, obj_str], tokenizer,
+            #             eval(args_global.STATISTIC_RANGE[10:])) is False:
+            #         continue
 
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_pred:
                 triples_pred.append(triple_info)
+                sample_out['triples_pred'].append(triple_info)
 
         all_samples_triples_label.append(triples_label.copy())
         all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
 
-    print(f"-- sample_num={len(all_samples_triples_label)}")
-    print(f"-- label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
-          f"pred_triple_num={sum([len(triples) for triples in all_samples_triples_pred])}")
     p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
                                args=args_global, tokenizer=tokenizer)
     res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
-    return res_triple
+    return res_triple, all_samples_triples_pred_label_output
 
 
 def evaluate_1_checkpoint__for_t5(predict_file, label_file, tokenizer):
@@ -1333,19 +1264,14 @@ def evaluate_1_checkpoint__for_t5(predict_file, label_file, tokenizer):
     # -------------------- 遍历 label_data，获取结构化样本信息
     all_samples_triples_label = []
     all_samples_triples_pred = []
+    all_samples_triples_pred_label_output = []
     for d_i in range(len(label_data)):  # 遍历标签
         text = label_data[d_i]['text']
-
-        # 判断样本中的三元组数量，保留符合要求的
-        if "triple_num" in args_global.STATISTIC_RANGE:
-            if if_label_triple_num_in_range(
-                    label_data[d_i]['relation_list'],
-                    eval(args_global.STATISTIC_RANGE[10:])) is False:
-                continue
-        elif 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
-            entity_seo_list = if_sample_has_SEO(label_data[d_i]['relation_list'])
-            if len(entity_seo_list) == 0:
-                continue
+        sample_out = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [],
+        }    # output for complex scenarios
 
         # -------------------- label
         triples_label_with_pos = label_data[d_i]['relation_list'].copy()
@@ -1356,18 +1282,6 @@ def evaluate_1_checkpoint__for_t5(predict_file, label_file, tokenizer):
             obj_str = triple_str_pos['object']
             subj_char_span = triple_str_pos['subj_char_span']
             obj_char_span = triple_str_pos['obj_char_span']
-
-            if args_global.STATISTIC_RANGE == "SEO_triple":  # 统计SEO情况的三元组的召回率
-                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
-                    continue
-            elif "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
-                    continue
-            elif args_global.STATISTIC_RANGE in ["segmented_entity"]:
-                if len(subj_char_span) == 1 and len(obj_char_span) == 1:  # 不含分段实体
-                    continue
 
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_label:
@@ -1388,15 +1302,127 @@ def evaluate_1_checkpoint__for_t5(predict_file, label_file, tokenizer):
             if len(appear_group_list) * 2 <= len(LLM_Output_Group):
                 continue    # 少于等于半数则判定为不正确
 
-            # 特殊统计任务
+            triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
+            if triple_info not in triples_pred:
+                triples_pred.append(triple_info)
+                sample_out['triples_pred'].append(triple_info)
+
+        all_samples_triples_label.append(triples_label.copy())
+        all_samples_triples_pred.append(triples_pred.copy())
+        all_samples_triples_pred_label_output.append(sample_out.copy())
+
+    p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
+                               args=args_global, tokenizer=tokenizer)
+    res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
+    return res_triple, all_samples_triples_pred_label_output
+
+
+def evaluate_complex_scenarios(samples_label_pred, tokenizer):
+    """
+
+    :param samples_label_pred:  list[dict]
+        samples_label_pred[?] = {
+            'text': label_data[d_i]['text'],
+            'triples_label': label_data[d_i]['relation_list'].copy(),
+            'triples_pred': [{'subj': subj_str, 'rela': rela_str, 'obj': obj_str}, {}, ...],
+        }
+
+    :return:
+    """
+
+    if samples_label_pred is None or len(samples_label_pred) == 0:
+        return
+    if args_global.STATISTIC_RANGE == "all":  # 没有统计复杂场景的需求
+        return
+
+    all_samples_triples_label = []
+    all_samples_triples_pred = []
+    for sample in samples_label_pred:  # 遍历标签
+        text = sample['text']
+
+        # complex scenarios
+        if "triple_num" in args_global.STATISTIC_RANGE:
+            triple_value = eval(span_find(args_global.STATISTIC_RANGE, "triple_num", ")")[0] + ")")
+            if if_label_triple_num_in_range(sample['triples_label'], triple_value) is False:
+                continue
+        # if "sent_len" in args_global.STATISTIC_RANGE:
+        #     if if_sent_len_in_range(
+        #             label_data[d_i]['text'], tokenizer,
+        #             eval(args_global.STATISTIC_RANGE[8:])) is False:
+        #         continue
+        if 'EPO' in args_global.STATISTIC_RANGE:  # EPO situation, 太少了
+            entity_epo_list = if_sample_has_EPO(sample['triples_label'])
+            if len(entity_epo_list) == 0:
+                continue
+        if 'SEO' in args_global.STATISTIC_RANGE:  # SEO situation
+            entity_seo_list = if_sample_has_SEO(sample['triples_label'])
+            if len(entity_seo_list) == 0:
+                continue
+        if 'Normal' in args_global.STATISTIC_RANGE:  # situation without EPO and SEO
+            entity_epo_list = if_sample_has_EPO(sample['triples_label'])
+            entity_seo_list = if_sample_has_SEO(sample['triples_label'])
+            if len(entity_epo_list) > 0 or len(entity_seo_list) > 0:
+                continue
+
+        # -------------------- label
+        triples_label = []
+        for triple_str_pos in sample['triples_label']:
+            subj_str = triple_str_pos['subject']
+            rela_str = triple_str_pos['predicate']
+            obj_str = triple_str_pos['object']
+            subj_char_span = triple_str_pos['subj_char_span']
+            obj_char_span = triple_str_pos['obj_char_span']
+
+            # complex scenarios
+            if "segmented_entity" in args_global.STATISTIC_RANGE:
+                # 删除 不含分段实体的三元组
+                if len(subj_char_span) == 1 and len(obj_char_span) == 1:
+                    continue
+            if "segment_num" in args_global.STATISTIC_RANGE:
+                segment_num = max([len(subj_char_span), len(obj_char_span)])
+                range_value = eval(span_find(args_global.STATISTIC_RANGE, "segment_num", ")")[0] + ")")
+                if if_segment_num_in_range(segment_num, range_value) is False:
+                    continue
+            if "SEO_triple" in args_global.STATISTIC_RANGE:  # 统计SEO情况的三元组的召回率
+                if subj_str not in entity_seo_list and obj_str not in entity_seo_list:
+                    continue
             if "entity_len" in args_global.STATISTIC_RANGE:
-                if if_entity_len_in_range(
-                        [subj_str, obj_str], tokenizer,
-                        eval(args_global.STATISTIC_RANGE[10:])) is False:
+                value = eval(span_find(args_global.STATISTIC_RANGE, "entity_len", ")")[0] + ")")
+                if if_entity_len_in_range([subj_str, obj_str], tokenizer, value) is False:
                     continue
-            elif args_global.STATISTIC_RANGE in ["segmented_entity"]:
-                if subj_str in text and obj_str in text:  # 不含分段实体
+
+            triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
+            if triple_info not in triples_label:
+                triples_label.append(triple_info)
+
+        # -------------------- process prediction
+        triples_pred = []
+        for triple_str in sample['triples_pred']:
+            subj_str = triple_str['subj']
+            rela_str = triple_str['rela']
+            obj_str = triple_str['obj']
+
+            # complex scenarios
+            if "entity_len" in args_global.STATISTIC_RANGE:
+                value = eval(span_find(args_global.STATISTIC_RANGE, "entity_len", ")")[0] + ")")
+                if if_entity_len_in_range([subj_str, obj_str], tokenizer, value) is False:
                     continue
+            if "segmented_entity" in args_global.STATISTIC_RANGE:
+                # 删除 不含分段实体的三元组
+                if 'subj_char_span' in triple_str:
+                    if len(triple_str['subj_char_span']) == 1 and len(triple_str['obj_char_span']) == 1:
+                        continue
+                else:
+                    if subj_str in text and obj_str in text:
+                        continue
+            if "pred_del_seg_ent" in args_global.STATISTIC_RANGE:
+                # 删除预测结果中的所有含分段实体的三元组
+                if 'subj_char_span' in triple_str:
+                    if len(triple_str['subj_char_span']) > 1 or len(triple_str['obj_char_span']) > 1:
+                        continue
+                else:
+                    if subj_str not in text or obj_str not in text:
+                        continue
 
             triple_info = {'subj': subj_str, 'rela': rela_str, 'obj': obj_str}
             if triple_info not in triples_pred:
@@ -1405,13 +1431,14 @@ def evaluate_1_checkpoint__for_t5(predict_file, label_file, tokenizer):
         all_samples_triples_label.append(triples_label.copy())
         all_samples_triples_pred.append(triples_pred.copy())
 
-    print(f"-- sample_num={len(all_samples_triples_label)}")
-    print(f"-- label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
+    print(f"-- complex scenario: {args_global.STATISTIC_RANGE}")
+    print(f"    sample_num={len(all_samples_triples_label)}")
+    print(f"    label_triple_num={sum([len(triples) for triples in all_samples_triples_label])}, "
           f"pred_triple_num={sum([len(triples) for triples in all_samples_triples_pred])}")
     p, r, f1 = f1_score_triple(all_samples_triples_pred, all_samples_triples_label,
                                args=args_global, tokenizer=tokenizer)
     res_triple = {'p': round(p, 4), 'r': round(r, 4), 'f1': round(f1, 4)}
-    return res_triple
+    print(f"    {res_triple}")
 
 
 def score_all():
@@ -1434,6 +1461,8 @@ def score_all():
         evaluate_1_checkpoint = evaluate_1_checkpoint__for_SPN
     elif args_global.MODEL_NAME == 'UniRel':
         evaluate_1_checkpoint = evaluate_1_checkpoint__for_UniRel
+    elif args_global.MODEL_NAME == 'PRGC':
+        evaluate_1_checkpoint = evaluate_1_checkpoint__for_PRGC
     elif args_global.MODEL_NAME == 'OneRel':
         evaluate_1_checkpoint = evaluate_1_checkpoint__for_OneRel
     elif args_global.MODEL_NAME == 't5':
@@ -1473,60 +1502,58 @@ def score_all():
         predict_file = os.path.join(checkpoint_dir, args_global.PREDICT_FILENAME_dev)
         label_file = os.path.join(args_global.DATASET_DIR, args_global.LABEL_FILENAME_dev)
         if os.path.isfile(predict_file) is True:
-            res_triple_dev = evaluate_1_checkpoint(
-                predict_file=predict_file,
-                label_file=label_file,
-                tokenizer=tokenizer
+            res_triple_dev, samples_label_pred_dev = evaluate_1_checkpoint(
+                predict_file=predict_file, label_file=label_file, tokenizer=tokenizer
             )
             res['triple_dev'] = res_triple_dev
             print(f"triple dev: {res_triple_dev}")
+            evaluate_complex_scenarios(samples_label_pred_dev, tokenizer)
 
         predict_file = os.path.join(checkpoint_dir, args_global.PREDICT_FILENAME_test)
         label_file = os.path.join(args_global.DATASET_DIR, args_global.LABEL_FILENAME_test)
         if os.path.isfile(predict_file) is True:
-            res_triple_test = evaluate_1_checkpoint(
-                predict_file=predict_file,
-                label_file=label_file,
-                tokenizer=tokenizer,
+            res_triple_test, samples_label_pred_test = evaluate_1_checkpoint(
+                predict_file=predict_file, label_file=label_file, tokenizer=tokenizer,
             )
             res['triple_test'] = res_triple_test
             print(f"triple test: {res_triple_test}")
+            evaluate_complex_scenarios(samples_label_pred_test, tokenizer)
+            # evaluate_complex_scenarios(samples_label_pred_test+samples_label_pred_dev, tokenizer)  # for EPO
         # res_triple_test = evaluate_1_checkpoint_240424(os.path.join(output_dir, "dataset_prediction_test.json"), ask_num, tokenizer)
         # res['triple_test'] = res_triple_test
         # print(f"triple test: {res_triple_test}")
 
-        # # delete bad model
-        # model_file = os.path.join(checkpoint_dir, args_global.CHECKPOINT_MODEL_NAME)
-        # if args_global.DELETE_BAD_MODEL is True and os.path.isfile(model_file) is True \
-        #         and res.get('triple_dev') is not None and res['triple_dev']['f1'] < args_global.BAD_MODEL_THRE:
-        #     os.remove(model_file)
-        #     print(f"模型效果差，已删除参数文件：{model_file}")
-        #     time.sleep(5)
-        # # else:
-        # #     print(DELETE_BAD_MODEL)
-        # #     print(os.path.isfile(model_file))
-        # #     print(res.get('triple_dev'))
-        # #     print(os.path.isfile(model_file))
-        # #     time.sleep(3)
-
-        if 'triple_test' in res and 'triple_dev' in res:
+        if 'triple_dev' in res:  # and 'triple_test' in res:
             res_all.append(res)
         else:
             print("    该checkpoint无完整的案例输出，无法打分")
 
     res_all.sort(key=lambda x: x['triple_dev']['f1'], reverse=True)
-    res_all_TestTop = res_all.copy()
-    res_all_TestTop.sort(key=lambda x: x['triple_test']['f1'], reverse=True)  # 即，将dev、test角色颠倒
+    # res_all_TestTop = res_all.copy()
+    # res_all_TestTop.sort(key=lambda x: x['triple_test']['f1'], reverse=True)  # 即，将dev、test角色颠倒
 
-    # 计算 valid 与 test f1 之间差值的平均值
-    res_top10 = res_all[:10].copy() if len(res_all) > 10 else res_all.copy()
-    f1_dif = 0
-    for res in res_top10:
-        f1_dif += res['triple_test']['f1'] - res['triple_dev']['f1']
-    f1_dif /= len(res_top10)
-    print(f"f1_dif_between_dev_test = {f1_dif}")
-    res_all.append({'aver_top10_f1_dif': f1_dif})
+    # decide the best checkpoint
+    best_checkpoint = res_all[0]['step']
 
+    # # 计算 valid 与 test f1 之间差值的平均值
+    # res_top10 = res_all[:10].copy() if len(res_all) > 10 else res_all.copy()
+    # f1_dif = 0
+    # for res in res_top10:
+    #     f1_dif += res['triple_test']['f1'] - res['triple_dev']['f1']
+    # f1_dif /= len(res_top10)
+    # print(f"f1_dif_between_dev_test = {f1_dif}")
+
+    res_all.append({
+        # 'aver_top10_f1_dif': f1_dif,
+        'best_checkpoint': best_checkpoint,  # for prediction
+    })    # additional information
+
+    # complex scenarios
+    if args_global.STATISTIC_RANGE != "all":
+        print("complex scenario static, no save and curve.")
+        exit()  # do not save
+
+    # save
     rouge_suffix = "complete"
     if args_global.USE_ROUGE:
         # rouge_suffix = f"{args_global.WHICH_ROUGE.replace('-', '')}" \
@@ -1578,16 +1605,18 @@ def paint_f1_curve(file_path_name):
             continue
         step_number_list.append(step_num)
         dev_f1_list.append(res['triple_dev']['f1'])
-        test_f1_list.append(res['triple_test']['f1'])
+        if "triple_test" in res:
+            test_f1_list.append(res['triple_test']['f1'])
 
     # paint
     plt.plot(step_number_list, dev_f1_list, label='dev_f1', color='blue')
-    plt.plot(step_number_list, test_f1_list, label='test_f1', color='red')
-    plt.legend()  # 添加图例
-    plt.title(f"{file_name} f1 change")
-    plt.xlabel('step')
-    plt.ylabel('f1')
-    plt.grid(True)  # 网格线
+    if len(test_f1_list) == len(step_number_list):
+        plt.plot(step_number_list, test_f1_list, label='test_f1', color='red')
+    plt.legend()            # 添加图例，即标注各曲线分别代表什么。
+    plt.title(f"{file_name} f1 change")  # 图的名字
+    plt.xlabel('step')     # x轴名字
+    plt.ylabel('f1')      # y轴名字
+    plt.grid(True)       # 网格线
     pic_name = "curve(f1)_" + file_name[:-5] + ".png"  # json -> png
     plt.savefig(os.path.join(file_path, pic_name))
     print("curve saved")
@@ -1595,13 +1624,13 @@ def paint_f1_curve(file_path_name):
 
 if __name__ == "__main__":
     print(args_global)
-    # time.sleep(5)
     timepoint_start = time.time()
     res_path_name = score_all()
     print(f"get score END. take time: {(time.time() - timepoint_start) / 60} mins")
 
+    # paint curve of f1
     # res_path_name = "outputs/LSTM compare in LossCRF/240725_LSTM-BiL2H576_LossCRF/score_triple_complete.json"
-    paint_f1_curve(res_path_name)
+    # paint_f1_curve(res_path_name)
 
     # # test. 获取rouge分数
     # get_rouge_test(

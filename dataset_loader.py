@@ -59,15 +59,19 @@ class Histogram:
             self.statistic_info_simple[i][1] = self.statistic_info[i][2]
 
 
-class Char_Token_SpanConverter(object):  # jyz add 2024-06. 用于中文数据集生成准确的token_span
+class Char_Token_SpanConverter(object):
     """
+    用于数据集生成准确的 token_char_mapping, 并互化
+    version 241006:
+        -- 在 get_tok_span 中添加了对 char_span 的校验
+    version 240825: 添加 返回mapping的函数
     version 240725 : 考虑了span互化时，输入span为(x,x)的异常情况，print了一些提示信息。
     """
 
     def __init__(self, tokenizer, add_special_tokens=False, has_return_offsets_mapping=True):
         """
         add_special_tokens: 如果 add_special_tokens=True，会将 [CLS] 考虑在内，token_span 数值整体+1
-        has_return_offsets_mapping: bool. tokenizer是否包含return_offsets_mapping功能，若不包含，手动生成。
+        has_return_offsets_mapping: bool. tokenizer自身是否包含return_offsets_mapping功能，若不包含，由spanconverter生成。
         """
         self.tokenizer = tokenizer
         self.token_info = None
@@ -77,11 +81,11 @@ class Char_Token_SpanConverter(object):  # jyz add 2024-06. 用于中文数据�
 
     def get_tok_span(self, text: str, char_span):
 
+        # check
+        assert char_span[1] > char_span[0] >= 0, f"\n{text}\n{char_span}"
+
         # get mapping
-        if self.token_info is not None and self.token_info["text"] == text:
-            pass
-        else:
-            self._get_mapping(text)
+        self._get_mapping(text)
 
         # get token span
         if char_span[0] == char_span[1]:
@@ -98,10 +102,8 @@ class Char_Token_SpanConverter(object):  # jyz add 2024-06. 用于中文数据�
 
     def get_char_span(self, text: str, token_span):
         # get mapping
-        if self.token_info is not None and self.token_info["text"] == text:
-            pass
-        else:
-            self._get_mapping(text)
+        self._get_mapping(text)
+
         # get char span
         if token_span[0] == token_span[1]:
             char_span_list = self.token_info["tok2char_mapping"][token_span[0]:token_span[1] + 1]
@@ -114,10 +116,21 @@ class Char_Token_SpanConverter(object):  # jyz add 2024-06. 用于中文数据�
 
         return char_span
 
+    def get_mapping_tok2char(self, text):
+        self._get_mapping(text)
+        return self.token_info["tok2char_mapping"]  # 满足切片规则
+
+    def get_mapping_char2tok(self, text):
+        self._get_mapping(text)
+        return self.token_info["char2tok_mapping"]
+
     def _get_mapping(self, text):
         """
         实际返回 encode_plus 生成的 token相关信息，其中添加了一些key，主要包括 char2tok_mapping
         """
+        if self.token_info is not None and self.token_info["text"] == text:
+            return  # 跳过重复操作
+
         if self.has_return_offsets_mapping is True:
             # Tokenizer 自带生成 offset_mapping(tok2char_mapping) 的功能
             token_info = self.tokenizer.encode_plus(text,
@@ -258,31 +271,11 @@ NER_TAG_LIST = ["X", "O",
                 ]
 
 SPECIAL_TOKENS = {
-    # 'unk_tokens': ['￡', '…', '\uf06c', 'Φ', '屮', '\uf09e', '\xa0'],
-
-    # 'token_trans_1to1': [[' ', '\n', '\t', '—', '–', '‐', '﹤', 'Ｒ', '‘', '’', '“', '”',
-    #                       'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-    #                       'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R',
-    #                       'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'],
-    #                      ['space', 'enter', 'tab', '-', '-', '-', '<', 'r', '##ᄆ', '##ᄇ', '##ᄆ', '##ᄇ',
-    #                       'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h',
-    #                       'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
-    #                       's', 't', 'u', 'v', 'w', 'x', 'y', 'z']],
-
     'diy_str': {'rela': '[rela]',
                 'subj': '[subj]',
                 'obj': '[obj]',
                 'entity_omit': '[ent_omit]', },
-    # 'diy_str_token': {'rela': '##关',
-    #                   'subj': '##主',
-    #                   'obj': '##客',
-    #                   'entity_omit': '##略', },
-
 }
-"""
-'diy_str': 句子还是文本阶段添加的特殊字符
-'diy_str_token': 句子转换为token后，特殊字符对应的词表符号（使用不会在语料库中出现的符号临时代替）
-"""
 
 ADDITIONAL_SPECIAL_TOKENS = ['[rela]', '[subj]', '[obj]', '[ent_omit]', '“', '”']
 
@@ -304,8 +297,8 @@ ADDITIONAL_SPECIAL_TOKENS = ['[rela]', '[subj]', '[obj]', '[ent_omit]', '“', '
 
 def triples_sort__priority_judge(triple1_info, triple2_info):
     """
-    一个样本（一句话）中包含多个实体关系三元组，将它们按在文中出现的顺序排序。
-    判断优先级。
+    该函数在判断优先级，用于排序。
+    排序：一个样本（一句话）中包含多个实体关系三元组，将它们按在文中出现的顺序排序。
         第一优先级：主体位置。主体位置完全相同时判断第二优先级
         第二优先级：客体位置
     :param triple1_info: [ [列表元素是主体各字符位置下标], [列表元素是客体各字符位置下标] ]
@@ -337,8 +330,8 @@ def triples_sort__priority_judge(triple1_info, triple2_info):
 
 def triples_insert_sort_once(triples, triple_new):
     """
-    一个样本（一句话）中包含多个实体关系三元组，将它们按在文中出现的顺序排序。
-    执行一次插入排序
+    该函数执行插入排序的一轮，即将一个样本插入合适的位置。
+    排序：一个样本（一句话）中包含多个实体关系三元组，将它们按在文中出现的顺序排序。
     :param triples:   一个按优先级由高到低排列的三元组列表
         example: triples = [
                 [('LTE中传输块的信道编码方案', '实例为', 'Turbo编码'), [(12, 26)], [(27, 34)]],
@@ -479,9 +472,9 @@ def sent_add_prompt(prompt_mode, sent, rela=None, rela_mode=None, triple_last=No
     # 添加关系提示
     if prompt_mode in ['all_text', 'entity_emb']:
         if rela_mode in ['sep_normal']:
-            rela_prompt = f" {SPECIAL_TOKENS['diy_str']['rela']} " + rela
-        elif rela_mode in ['symbol']:
-            rela_prompt = " [?] ".replace('?', rela)
+            rela_prompt = f" {SPECIAL_TOKENS['diy_str']['rela']} {rela}"
+        elif rela_mode in ['symbol']:     # 自定义的special token
+            rela_prompt = f" {SPECIAL_TOKENS['diy_str']['rela']} [{rela}]"
         else:
             assert 0, rela_mode
         sent_with_prompt += rela_prompt
@@ -814,9 +807,13 @@ def ner_tag_decode(
 
 
 def process_batch(batch):
-    # batch是一个包含batch_size个字典的列表，
-    # 每个字典都有 input_ids, label_ids, attention_mask, segment_ids, 等成员
-    # 每个字典 具体结构详见 Dataset.samples_1_label__to_bert_input_2406() 的输出
+    """
+    作为 Dataloader 的 collate_fn
+    :param batch: 一个包含batch_size个字典的列表，
+                每个字典都有 input_ids, label_ids, attention_mask, segment_ids, 等成员，
+                    具体结构详见 Dataset.samples_1_label__to_bert_input_2406() 的输出.
+    :return:
+    """
 
     def list_padding(lst: list, target_len: int, padding_value=0):
         assert len(lst) <= target_len, f"\nbatch={batch}\nlst={lst}\nlen(lst)={len(lst)}\ntarget_len={target_len}"
@@ -885,6 +882,7 @@ class Dataset:
         self.args = args
         self.file_data = file_data
 
+        # relation types
         with open(file_rela, "r", encoding="utf-8") as fi:
             relation_dict = eval(fi.read())
         self.relation_list = list(relation_dict.keys())
@@ -972,7 +970,7 @@ class Dataset:
 
             triple_with_char_pos = datas[datas_i]['triple_label'].copy()
 
-            sep_rela = '[rela]'
+            sep_rela = SPECIAL_TOKENS['diy_str']['rela']
             assert sep_rela in ADDITIONAL_SPECIAL_TOKENS, f"\n{ADDITIONAL_SPECIAL_TOKENS}"
             prompt_char_pos = sent_with_prompt.find(sep_rela)
             prompt_token_pos = self.char_token_spanconverter.get_tok_span(

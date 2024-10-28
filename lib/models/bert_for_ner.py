@@ -274,6 +274,8 @@ class BertLstmForNer(BertPreTrainedModel):  # jyz add 2407
         # self.dropout_bert_output = nn.Dropout(config.hidden_dropout_prob)
         self.dropout_lstm_input = nn.Dropout(config.hidden_dropout_prob)
 
+        ########################
+        ########## LSTM init
         self.lstm = nn.LSTM(input_size=config.hidden_size + lstm_input_other_emb_size,
                             hidden_size=other_args.lstm_hidden_size,
                             num_layers=other_args.lstm_num_layers,
@@ -297,6 +299,9 @@ class BertLstmForNer(BertPreTrainedModel):  # jyz add 2407
                 lstm_output_size = other_args.lstm_hidden_size * 2
             else:                           # 正反LSTM独立
                 lstm_output_size = other_args.lstm_hidden_size + independent_bw_lstm[1]
+        # lstm_output_size = config.hidden_size
+        ########## LSTM init
+        ########################
 
         self.classifier = nn.Linear(lstm_output_size, config.num_labels)
         if self.loss_type in ['crf']:
@@ -371,14 +376,15 @@ class BertLstmForNer(BertPreTrainedModel):  # jyz add 2407
         # LSTM
         lstm_input = self.dropout_lstm_input(lstm_input)    # (B, L, H)
 
-        lstm_seq_output, _ = self.lstm(lstm_input)  # out size: (4, 47, hidden_layer_size * num_directions)
-        # bilstm_mask = None
-        # if self.bilstm_len in ['tag_mask', 'bert_att_mask']:
-        #     bilstm_mask = batch[self.bilstm_len]
-        # lstm_seq_output, _ = self.my_lstm(lstm_input, bilstm_mask)
+        # lstm_seq_output, _ = self.lstm(lstm_input)  # out size: (4, 47, hidden_layer_size * num_directions)
+        # # bilstm_mask = None
+        # # if self.bilstm_len in ['tag_mask', 'bert_att_mask']:
+        # #     bilstm_mask = batch[self.bilstm_len]
+        # # lstm_seq_output, _ = self.my_lstm(lstm_input, bilstm_mask)
+        #
+        # lstm_seq_output = self.dropout_lstm_output(lstm_seq_output)
 
-        lstm_seq_output = self.dropout_lstm_output(lstm_seq_output)
-        # lstm_seq_output = lstm_input    # ablation study
+        lstm_seq_output = lstm_input    # ablation study. no LSTM
 
         logits = self.classifier(lstm_seq_output)  # torch.Size([B, seq_len, 34])  34==cls_num
         # print(XXXXX)

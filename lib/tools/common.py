@@ -8,6 +8,7 @@ import torch.nn as nn
 from collections import OrderedDict
 from pathlib import Path
 import logging
+import re
 
 logger = logging.getLogger()
 def print_config(config):
@@ -398,3 +399,47 @@ def summary(model, *inputs, batch_size=-1, show_input=True):
     print(f"Trainable params: {trainable_params:0,}")
     print(f"Non-trainable params: {(total_params - trainable_params):0,}")
     print("-----------------------------------------------------------------------")
+
+
+def clean_text(text):
+    """
+
+    :param text:
+    :return:
+        cleaned_text: 将连续的空白字符替换为单个空格，并去除首尾的空白字符
+        mapping: 列表，长度等于输入文本。存放输入文本到输出文本位置的映射.
+                下标对应输入文本的下标，值对应输出文本的下标。
+                其中输入文本中所有空白字符对应的值都是-1，代表指向输出文本的无效位置。
+    version: 240604
+    """
+
+    cleaned_text = re.sub("\s+", " ", text).strip()
+    # ^^^ 使用正则表达式将连续的空白字符替换为单个空格，并去除首尾的空白字符
+    # ^^^ 空白字符为：（空格）（制表符）（换行符）（回车符）（垂直制表符）（换页符）
+
+    mapping = [-1] * len(text)
+    text_i = 0
+    cleaned_text_i = 0
+    while text_i < len(text) and cleaned_text_i < len(cleaned_text):
+            if bool(re.match("\s", text[text_i])) is False:
+                if text[text_i] == cleaned_text[cleaned_text_i]:
+                    mapping[text_i] = cleaned_text_i
+                    text_i += 1
+                    cleaned_text_i += 1
+                else:
+                    assert 0, f"\n{text}\n{cleaned_text}" \
+                              f"\n{text_i}  {text[text_i]}" \
+                              f"\n{cleaned_text_i}  {cleaned_text[cleaned_text_i]}"
+            else:
+                if bool(re.match("\s", cleaned_text[cleaned_text_i])):
+                    cleaned_text_i += 1
+                mapping[text_i] = -1  # text中所有空白字符对应 -1 位置
+                text_i += 1
+
+    if cleaned_text_i < len(cleaned_text):
+        assert 0, f"\n{text}\n{cleaned_text}\n[{cleaned_text[cleaned_text_i:]}]"
+    if text_i < len(text):
+        for c in text[text_i:]:
+            assert bool(re.match("\s", c)), f"\n{text}\n{cleaned_text}\n[{text[text_i:]}]"
+
+    return cleaned_text, mapping
