@@ -26,13 +26,13 @@ bash script_run.sh
 
 # Guidance for Baseline Reproduction
 
-- We provide reproduction codes or reproduction guidelines for each baseline in (another URL). 
+- We provide reproduction codes or reproduction guidelines for each baseline in (https://github.com/JYzzzzzz/PEAR-RTE-baselines). 
 
 - We add explanation in the `README.md` file in the root path of each baseline. The explanation generally cover: 
-	0 The instructions in the source code README.
-	1 What parts of the source code were modified.
-	2 The training and validation procedures.
-	3 The URL of the source code.
+	- (0) The original instructions in the source code README.
+	- (1) What parts of the source code were modified.
+	- (2) The training and validation procedures.
+	- (3) The URL of the source code.
 
 
 # Cite
