@@ -8,7 +8,7 @@
 
 ## Quick Start
 
-1. Download the pre-trained model - `chinese-bert-wwm-ext` and place it in `./pretrain`.
+1. Download the pre-trained model - [chinese-bert-wwm-ext](https://github.com/ymcui/Chinese-BERT-wwm) and place it in `./pretrain`.
 
 2. (optional) Adjust parameters in `run.py` and `script_run.sh`, especially the *output_dir*
 
@@ -21,13 +21,19 @@ bash script_run.sh
 
 # CMIM23-NOM1-RA (dataset)
 
-... to be supplemented
-- placed in `./dataset`
+- It is the first high-quality restricted domain relational triple extraction dataset in the network operation and maintenance field.
+- The dataset is placed in `./dataset/CMIM23-NOM1-RA`.
 
 # Guidance for Baseline Reproduction
 
-... to be supplemented
-- in `./baselines`
+- We provide reproduction codes or reproduction guidelines for each baseline in (another URL). 
+
+- We add explanation in the `README.md` file in the root path of each baseline. The explanation generally cover: 
+	0 The instructions in the source code README.
+	1 What parts of the source code were modified.
+	2 The training and validation procedures.
+	3 The URL of the source code.
+
 
 # Cite
 
