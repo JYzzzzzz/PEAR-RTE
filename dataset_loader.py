@@ -28,8 +28,6 @@ class Histogram:
         self.sample_in_lim_num = 0
         self.over_left_num = 0
         self.over_right_num = 0
-        # print("-- a histogram has been initialized: {}".format(init_show))
-        # print(self.statistic_info_simple)
 
     def input_one_data(self, data):  # 直方图统计时添加一个数据
         if data < self.left_lim:
@@ -45,9 +43,6 @@ class Histogram:
                 break
 
     def update_ratio(self):  # 直方图显示前更新比率
-        # sample_num = 0
-        # for col_info in self.statistic_info:
-        #     sample_num += col_info[2]
 
         sample_num = self.sample_in_lim_num
         if sample_num <= 0:  # 防止零除错误
@@ -280,21 +275,6 @@ SPECIAL_TOKENS = {
 ADDITIONAL_SPECIAL_TOKENS = ['[rela]', '[subj]', '[obj]', '[ent_omit]', '“', '”']
 
 
-# def which_list_find_small_first(list1, list2):
-#     # 在哪个列表中先找到较小数字
-#     list1.append(min(list1) - 100)  # 添加哨兵
-#     list2.append(min(list2) - 100)  # 添加哨兵
-#     i_max = len(list1) if len(list1) < len(list2) else len(list2)
-#     i = 0
-#     while i < i_max:
-#         if list1[i] < list2[i]:
-#             return 1
-#         elif list2[i] < list1[i]:
-#             return 2
-#         i += 1
-#     return 0  # 两序列完全相同
-
-
 def triples_sort__priority_judge(triple1_info, triple2_info):
     """
     该函数在判断优先级，用于排序。
@@ -389,8 +369,6 @@ def sample_triples_sort(triples):
         assert len(triple) >= 3 and (len(triple) - 3) % 2 == 0, f"\n{triple}"  # 长度大于3是句子中含有多对相同的三元组的情况
         i = 1
         while i < len(triple):
-            # if i > 1:
-            #     print(triple)
             trip = [triple[0], triple[i], triple[i + 1]].copy()
             triples_sort = triples_insert_sort_once(triples_sort, trip)  # 执行一次插入排序
             i += 2
@@ -414,26 +392,6 @@ def sample__get_1_relation(sent, relation, triples):
             triples_1rela.append(triple)
             triples_1rela__str_only.append(subj_rela_obj)
 
-    # triples_1rela = []
-    # for triple in triples:
-    #     subj_rela_obj__tuple = triple[0]
-    #     if subj_rela_obj__tuple[1] == relation:
-    #         if len(triple) == 3:
-    #             triples_1rela = triples_insert_sort_once(triples_1rela, triple)
-    #         else:  # 句中含有多处相同三元组的情况
-    #             # print("\n句中含有多处相同三元组的情况")
-    #             # print(triple)
-    #             assert len(triple) > 3 and (len(triple)-3)%2==0, f"\n{sent}\n{triple}"
-    #             triple_same = []
-    #             i = 1
-    #             while i < len(triple):
-    #                 triple_same = triples_insert_sort_once(triple_same, [triple[0], triple[i], triple[i + 1]])
-    #                 i += 2
-    #             # print(f"调整顺序与格式后变为：{triple_same}")
-    #             # print(f"只取第一个：{triple_same[0]}")
-    #             # time.sleep(5)
-    #             triples_1rela = triples_insert_sort_once(triples_1rela, triple_same[0])
-
     triples_1rela = sample_triples_sort(triples_1rela)  # 排序
 
     return [sent, relation, triples_1rela].copy()
@@ -452,48 +410,42 @@ def sent_token_cut(spanconverter, sent, max_token_len):  # 将sent按max_token_l
     return sent
 
 
-def sent_add_prompt(prompt_mode, sent, rela=None, rela_mode=None, triple_last=None,
+def sent_add_prompt(sent, rela=None, rela_mode=None, triple_last=None,
                     max_entity_char_len=None):
     """
 
     :param sent:
     :param rela:
-    :param triple_last:  [(subj, rela, obj), [subj_pos], [obj_pos]] or []
-                triple_last is [] when extracting the first triple
+    :param triple_last: The last triple. could be [(subj, rela, obj), [subj_pos], [obj_pos]] or [], 
+        triple_last is [] when extracting the first triple
     :param max_entity_char_len:
     :return:
     """
-    assert prompt_mode in ['all_text', 'entity_emb', 'all_emb']
     sent_with_prompt = sent
 
-    if prompt_mode in ['all_emb']:
-        return sent_with_prompt
-
     # 添加关系提示
-    if prompt_mode in ['all_text', 'entity_emb']:
-        if rela_mode in ['sep_normal']:
-            rela_prompt = f" {SPECIAL_TOKENS['diy_str']['rela']} {rela}"
-        elif rela_mode in ['symbol']:     # 自定义的special token
-            rela_prompt = f" {SPECIAL_TOKENS['diy_str']['rela']} [{rela}]"
-        else:
-            assert 0, rela_mode
-        sent_with_prompt += rela_prompt
+    if rela_mode in ['sep_normal']:
+        rela_prompt = f" {SPECIAL_TOKENS['diy_str']['rela']} {rela}"
+    elif rela_mode in ['symbol']:     # 自定义的special token
+        rela_prompt = f" {SPECIAL_TOKENS['diy_str']['rela']} [{rela}]"
+    else:
+        assert 0, rela_mode
+    sent_with_prompt += rela_prompt
 
     # 添加实体提示
-    if prompt_mode in ['all_text']:
-        ent_side = int(max_entity_char_len / 2)  # 提示实体一侧的最长长度
-        subj_last = ''
-        obj_last = ''
-        if len(triple_last) > 0:
-            subj_last = triple_last[0][0]
-            obj_last = triple_last[0][2]
-        if subj_last and obj_last:
-            if len(subj_last) > max_entity_char_len:  # 实体太长时，省略中间内容
-                subj_last = subj_last[:ent_side] + f" {SPECIAL_TOKENS['diy_str']['entity_omit']} " + subj_last[-ent_side:]
-            if len(obj_last) > max_entity_char_len:
-                obj_last = obj_last[:ent_side] + f" {SPECIAL_TOKENS['diy_str']['entity_omit']} " + obj_last[-ent_side:]
-            sent_with_prompt += f" {SPECIAL_TOKENS['diy_str']['subj']} " + subj_last + \
-                                f" {SPECIAL_TOKENS['diy_str']['obj']} " + obj_last  # 添加上一个主客体提示
+    ent_side = int(max_entity_char_len / 2)  # 提示实体一侧的最长长度
+    subj_last = ''
+    obj_last = ''
+    if len(triple_last) > 0:
+        subj_last = triple_last[0][0]
+        obj_last = triple_last[0][2]
+    if subj_last and obj_last:
+        if len(subj_last) > max_entity_char_len:  # 实体太长时，省略中间内容
+            subj_last = subj_last[:ent_side] + f" {SPECIAL_TOKENS['diy_str']['entity_omit']} " + subj_last[-ent_side:]
+        if len(obj_last) > max_entity_char_len:
+            obj_last = obj_last[:ent_side] + f" {SPECIAL_TOKENS['diy_str']['entity_omit']} " + obj_last[-ent_side:]
+        sent_with_prompt += f" {SPECIAL_TOKENS['diy_str']['subj']} " + subj_last + \
+                            f" {SPECIAL_TOKENS['diy_str']['obj']} " + obj_last  # 添加上一个主客体提示
 
     return sent_with_prompt
 
@@ -528,12 +480,6 @@ def sample_format_trans__sent1rela_to_sent1label(sample_1_rela):
         else:
             triple_last = []
 
-        # # add prompt to sent
-        # if prompt_mode in ["1"]:
-        #     sent_prompt = sent_add_prompt(sent, rela, triple_last, max_entity_len)
-        #     sample_new = [sent_prompt, triple]
-        # elif prompt_mode in ["2"]:
-        #     pass
         sample_new = {
             'sent_origin_id': -1,
             'sent_origin': sent,
@@ -736,68 +682,12 @@ def ner_tag_decode(
         ent_str = char_pos_2_str(sent, ent_char_spans)
         return ent_tok_spans, ent_char_spans, ent_str
 
-    # get relation
-    # rela = ''
-    # rela_pos = sent.find(SPECIAL_TOKENS['diy_str']['rela']) + len(SPECIAL_TOKENS['diy_str']['rela'])
-    # assert rela_pos > 0
-    # for offset in range(1, 10):
-    #     if sent[rela_pos:rela_pos+offset] in RELATION_SET:
-    #         rela = sent[rela_pos:rela_pos+offset]
-    #         break
-    # assert rela in RELATION_SET, f"\n{sent}\n{rela}"
-
-    # subj = ''
-    # subj_pos = []
-    # obj = ''
-    # obj_pos = []
     triple_info = {}
 
     if strategy == '1':
-        # tag_prefix = "Head"  # 查找 subj
-        # # 以下是subj、obj操作相同部分
-        # ent_pos_list = [[] for _ in range(5)]
-        # slice_id = 1
-        # for c_i, tag_num in enumerate(tag_list):
-        #     if f'{tag_prefix}-B' in NER_TAG_LIST[tag_num]:
-        #         slice_id = int(NER_TAG_LIST[tag_num][6])
-        #         # ent_list[slice_id - 1] += token_list[c_i]
-        #         ent_pos_list[slice_id - 1].append(c_i)
-        #     elif NER_TAG_LIST[tag_num] == f'{tag_prefix}-I':
-        #         # ent_list[slice_id - 1] += token_list[c_i]
-        #         ent_pos_list[slice_id - 1].append(c_i)
-        # pos_each_char = [ele for sublist in ent_pos_list for ele in sublist]
-        # ent_tok_spans = continuous_slices(pos_each_char)
-        # ent_char_spans = [span_converter.get_char_span(sent, span) for span in ent_tok_spans]
-        # for span_i in range(len(ent_char_spans)-1, -1, -1):
-        #     if ent_char_spans[span_i][0] == ent_char_spans[span_i][1]:  # 切片无内容
-        #         del ent_char_spans[span_i]
-        # ent_str = char_pos_2_str(sent, ent_char_spans)
-        # # 以上是subj、obj操作相同部分
-        # subj_pos = continuous_slices(pos_each_char)
-        # triple_info['subj_tok_span'] = subj_pos
-        # triple_info['subj_char_span'] = [span_converter.get_char_span(sent, span) for span in subj_pos]
-        # subj = char_pos_2_str(sent, triple_info['subj_char_span'])
         triple_info['subj_tok_span'], triple_info['subj_char_span'], subj = \
             tag2entity_strategy1(tag_prefix="Head")
 
-        # tag_prefix = "Tail"  # 查找 obj
-        # # 以下是subj、obj操作相同部分
-        # ent_pos_list = [[] for _ in range(5)]
-        # slice_id = 1
-        # for c_i, tag_num in enumerate(tag_list):
-        #     if f'{tag_prefix}-B' in NER_TAG_LIST[tag_num]:
-        #         slice_id = int(NER_TAG_LIST[tag_num][6])
-        #         # ent_list[slice_id - 1] += token_list[c_i]
-        #         ent_pos_list[slice_id - 1].append(c_i)
-        #     elif NER_TAG_LIST[tag_num] == f'{tag_prefix}-I':
-        #         # ent_list[slice_id - 1] += token_list[c_i]
-        #         ent_pos_list[slice_id - 1].append(c_i)
-        # pos_each_char = [ele for sublist in ent_pos_list for ele in sublist]
-        # # 以上是subj、obj操作相同部分
-        # obj_pos = continuous_slices(pos_each_char)
-        # triple_info['obj_tok_span'] = obj_pos
-        # triple_info['obj_char_span'] = [span_converter.get_char_span(sent, span) for span in obj_pos]
-        # obj = char_pos_2_str(sent, triple_info['obj_char_span'])
         triple_info['obj_tok_span'], triple_info['obj_char_span'], obj = \
             tag2entity_strategy1(tag_prefix="Tail")
 
@@ -954,19 +844,16 @@ class Dataset:
         :return:
         """
 
-        # datas_bert = []
         datas_bert = [{} for _ in range(len(datas))]
-        # pbar = ProgressBar(n_total=len(datas), desc=f'trans to bert input')
         for datas_i in range(len(datas)):
-            # pbar(datas_i)
             if datas_i + 1 % 100000 == 0:
                 print(f"    [trans to bert input format] - {datas_i + 1}/{len(datas)}")
-            # original_sent_id, sent_with_prompt, triple = datas[datas_i].copy()
             sent_with_prompt = sent_add_prompt(
-                prompt_mode=self.args.triple_last_fuse_mode, sent=datas[datas_i]['sent_origin'],
+                sent=datas[datas_i]['sent_origin'],
                 rela=datas[datas_i]['rela'], rela_mode=self.args.rela_prompt_mode,
                 triple_last=datas[datas_i]['triple_last'],
-                max_entity_char_len=self.args.max_entity_char_len)
+                max_entity_char_len=self.args.max_entity_char_len
+            )
 
             triple_with_char_pos = datas[datas_i]['triple_label'].copy()
 
@@ -1000,27 +887,11 @@ class Dataset:
                 sent_token_info['label'] = ()
 
             # 添加tag
-            # if "通常用阻塞干扰来衡量接收机抗邻道干扰的能力。" in sent_with_prompt:
-            #     print("")
-            #     print(f"-- sent_with_prompt = {sent_with_prompt}")
-            #     print(f"-- triple_with_char_pos = {triple_with_char_pos}")
             sent_token_info['label_ids'] = ner_tag_encode(
                 span_converter=self.char_token_spanconverter, sent_with_prompt=sent_with_prompt,
                 sent_tokens_len=len(sent_token_info['input_ids']), prompt_tok_pos=prompt_token_pos[0],
                 triple_with_char_pos=triple_with_char_pos, strategy='1',
             )
-            # if "通常用阻塞干扰来衡量接收机抗邻道干扰的能力。" in sent_with_prompt:
-            #     print(f"-- tag_list = {sent_token_info['label_ids']}")
-
-            # 校验一下
-            # triple_decode = ner_tag_decode(span_converter, sent_with_prompt, tag_ids, strategy='1')
-            # if triple_decode['subj_tok_span'] != triple_token_pos[1] or triple_decode['obj_tok_span'] != triple_token_pos[2]:
-            #     print(f"tag解码可能存在问题")
-            #     print(f"tokens = {sent_token_info['tokens']}")
-            #     print(f"tag_ids = {tag_ids}")
-            #     print(f"实际 token span = {triple_token_pos}")
-            #     print(f"解码 token span = {triple_decode}")
-            #     time.sleep(2)
 
             # 添加 tag_mask
             tag_mask = [0] * len(sent_token_info['input_ids'])
@@ -1028,16 +899,11 @@ class Dataset:
                 tag_mask[i] = 1
             sent_token_info['tag_mask'] = tag_mask.copy()
 
-            # 获取上一个 triple 的 tag list （用于其他的信息融合方式）
-            # if "通常用阻塞干扰来衡量接收机抗邻道干扰的能力。" in sent_with_prompt:
-            #     print(f"-- triple_with_char_pos last = {datas[datas_i]['triple_last']}")
             sent_token_info['label_ids_last'] = ner_tag_encode(
                 span_converter=self.char_token_spanconverter, sent_with_prompt=sent_with_prompt,
                 sent_tokens_len=len(sent_token_info['input_ids']), prompt_tok_pos=prompt_token_pos[0],
                 triple_with_char_pos=datas[datas_i]['triple_last'], strategy='1',
             )
-            # if "通常用阻塞干扰来衡量接收机抗邻道干扰的能力。" in sent_with_prompt:
-            #     print(f"-- tag_list last = {sent_token_info['label_ids_last']}")
 
             # 添加token序列长度
             sent_token_info['input_len'] = len(sent_token_info['input_ids'])
@@ -1088,8 +954,6 @@ class Dataset:
         print("-- Dataset.format__bert(): processing dataset to the format of `1 sent to 1 label`")
         samples_1_label = []
         for sent_id in range(len(self.samples[:])):
-            # id_, sent, triples_dict = samples[sample_i].copy()
-            # triples_list = list(triples_dict.values())
             id_, sent, triples_list = self.samples[sent_id].copy()
             """ triples_list
             [[('TD-LTE上行受限的信道', '实例为', '业务信道/PUSCH'), [(0, 13)], [(14, 24)]], 
@@ -1128,14 +992,9 @@ class Dataset:
                 ]
                 """
 
-                # samples_1_label += sample_1_rela_1_label__list.copy()
                 for sample_1label in sample_1_rela_1_label__list:
                     sample_1label['sent_origin_id'] = sent_id  # 添加 原句子id
                     samples_1_label.append(sample_1label.copy())
-                    # samples_1_label.append([sent_id] + sample_1label.copy())
-
-            # if i == 10:
-            #     print(XXXXXX)
 
         del triples_list_cut
         del sample_1_rela
@@ -1150,15 +1009,6 @@ class Dataset:
         ... ]
         """
 
-        # # 数据集数据量太大的情况下，采用将处理好的数据存放到磁盘，然后直接读取的策略。
-        # for i in range(8):
-        #     samples_bert = self.samples_1_label__to_bert_input_2406(
-        #         samples_1_label[int(len(samples_1_label)*i/8):int(len(samples_1_label)*(i+1)/8)])
-        #     with open(f"train_data__bert-base-cased__part{i+1}.json", "w", encoding="utf-8") as fp:
-        #         json.dump(samples_bert, fp, ensure_ascii=False)
-        #     print(f"saved train_data_bert_part{i+1}.json")
-        #     del samples_bert
-        # print(xxxxx)
         samples_bert = self.samples_1_label__to_bert_input_2406(samples_1_label)
         """ samples_bert[?] =    (OUTPUT)
         {
@@ -1262,20 +1112,6 @@ class Dataset:
 
             ques_length.input_one_data(len(system_info) + len(sent) + 2)
             ans_length.input_one_data(len(answer) + 1)
-            # sample_info = {"conversations": [
-            #     {
-            #         "role": "system",
-            #         "content": system_info
-            #     },
-            #     {
-            #         "role": "user",
-            #         "content": sent
-            #     },
-            #     {
-            #         "role": "assistant",
-            #         "content": answer
-            #     },
-            # ]}
             sample_info = {"conversations": [
                 {
                     "role": "user",
@@ -1370,8 +1206,6 @@ class Dataset:
         triple_num = Histogram(0, 6, 1)
         for id_, sent, triples in self.samples:
             triple_num.input_one_data(len(triples))
-            # if len(triples) == 0:
-            #     print(f"-- {sent}")
         triple_num.update_ratio()
         print(f"三元组个数（...{self.file_data[-20:]}）\n{triple_num.statistic_info_simple}  超出：{triple_num.over_right_num}")
 

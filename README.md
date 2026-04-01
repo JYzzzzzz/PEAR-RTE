@@ -1,10 +1,9 @@
-# PEAR
+# EARTE
 
 ## Environment
 
 - pytorch
 - transformers
-- ...
 
 ## Quick Start
 
@@ -26,7 +25,7 @@ bash script_run.sh
 
 # Guidance for Baseline Reproduction
 
-- We provide reproduction codes or reproduction guidelines for each baseline in (Anonymous). 
+- We provide reproduction codes or reproduction guidelines for each baseline in [EARTE-baselines](https://github.com/JYzzzzzz/PEAR-RTE-baselines). 
 
 - We add explanation in the `README.md` file in the root path of each baseline. The explanation generally cover: 
 	- (0) The original instructions in the source code README.
@@ -37,4 +36,19 @@ bash script_run.sh
 
 # Cite
 
-... to be supplemented
+- Please cite the paper if you use this code in your research.
+
+```
+@ARTICLE{11423911,
+  author={Jiang, Yuanzhen and Liu, Yaqiong and Wang, Xidian and Cheng, Nan and Jia, Zihan and Shi, Duo and Lv, Zhe and Li, Zhouyuan and Zhang, Yan},
+  journal={IEEE Transactions on Network and Service Management}, 
+  title={Entity-Level Autoregressive Relational Triple Extraction Toward Knowledge Graph Construction for Network Operation and Maintenance}, 
+  year={2026},
+  volume={23},
+  number={},
+  pages={3026-3038},
+  doi={10.1109/TNSM.2026.3671463},
+  ISSN={1932-4537},
+  month={},
+}
+```

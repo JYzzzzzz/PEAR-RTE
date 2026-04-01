@@ -27,7 +27,7 @@ from lib.processors.ner_seq import ner_processors as processors
 # from lib.metrics.ner_metrics import SeqEntityScore
 
 from dataset_loader import Dataset, NER_TAG_LIST, ADDITIONAL_SPECIAL_TOKENS, \
-    sent_token_cut, sent_add_prompt, ner_tag_decode, process_batch
+    sent_token_cut, ner_tag_decode, process_batch
 
 from transformers import BertTokenizerFast
 
@@ -84,25 +84,7 @@ def get_argparse():
     parser.add_argument("--bilstm_len", type=str, default='bert_att_mask',
                         choices=['tag_mask', 'bert_att_mask', 'none'])  # useful when use My_BiLSTM
     parser.add_argument("--indep_bw_lstm_h", type=int, default=0)
-    # ^^^ if use an independent bw lstm, and the hidden size of it.
-    #     uesful when --lstm_bidirectional=True
-    #     0, not use independent backword lstm;
-    #     >0, use, represent hidden_size value of backword lstm
 
-    # 实体、关系融合方式. useful in experiments, useless now
-    parser.add_argument("--triple_last_fuse_mode", type=str, default="all_text",
-                        choices=['all_text', 'entity_emb', 'all_emb'],)
-    """
-        all_text: rela、subj_last、obj_last 以文字形式添加到句尾。
-        entity_emb: rela 以文字形式添加到句尾。subj_last、obj_last 是将tag_list嵌入为(B, seq_len, dim) 的格式，
-        all_emb: rela 嵌入为(B, dim)后扩展为(B, seq_len, dim) 的格式，subj_last、obj_last是将tag_list嵌入为(B, seq_len, dim) 的格式，
-    """
-    parser.add_argument("--triple_last_fuse_position", type=str, default="bert_input_add",
-                        choices=['bert_input_add', 'lstm_input_add', 'lstm_input_cat'],
-                        help="useful when `triple_last_fuse_mode` in ['entity_emb', 'all_emb']")
-    parser.add_argument("--triple_last_cat_embedding_dim", type=int, default=100,
-                        help="useful when `triple_last_fuse_mode` in ['entity_emb', 'all_emb'], "
-                             "and `triple_last_position` = `..._cat`")
     parser.add_argument("--rela_prompt_mode", type=str, default='sep_normal',
                         choices=['sep_normal', 'symbol'],)
     """ 关系作为文字形式添加到句尾时，其模式
@@ -186,29 +168,6 @@ def set_optimizer_scheduler(args, model, train_dataloader, lr_down):
     # t_total = len(train_dataloader) * 50
     args.warmup_steps = len(train_dataloader) * args.warmup_proportion
 
-    # Prepare optimizer and schedule (linear warmup and decay)
-    # # 设置具体哪些参数要训练
-    # no_decay = ["bias", "LayerNorm.weight"]
-    # bert_param_optimizer = list(model.bert.named_parameters())
-    # crf_param_optimizer = list(model.crf.named_parameters())
-    # linear_param_optimizer = list(model.classifier.named_parameters())
-    # optimizer_grouped_parameters = [
-    #     {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
-    #      'weight_decay': args.weight_decay, 'lr': args.learning_rate * lr_down},
-    #     {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)],
-    #      'weight_decay': 0.0, 'lr': args.learning_rate * lr_down},
-    #
-    #     {'params': [p for n, p in crf_param_optimizer if not any(nd in n for nd in no_decay)],
-    #      'weight_decay': args.weight_decay, 'lr': args.crf_learning_rate * lr_down},
-    #     {'params': [p for n, p in crf_param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0,
-    #      'lr': args.crf_learning_rate * lr_down},
-    #
-    #     {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
-    #      'weight_decay': args.weight_decay, 'lr': args.crf_learning_rate * lr_down},
-    #     {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0,
-    #      'lr': args.crf_learning_rate * lr_down}
-    # ]
-
     optimizer = AdamW(model.parameters(), lr=args.learning_rate * lr_down, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
                                                 num_training_steps=t_total)
@@ -251,33 +210,6 @@ def train(args, datas, model, tokenizer):
                                                           output_device=args.local_rank,
                                                           find_unused_parameters=True)
 
-    # # Functional Test on Evaluating
-    # print("Functional Test on Evaluating")
-    # res_dev, preds_text_dev = evaluate_dataset_2407(
-    #     args, model, dataset_dev, sample_num=2)
-    # str_temp = ", ".join(['{}:{:.4f}'.format(key, value) for key, value in res_dev.items()])
-    # logger.info("Eval: " + str_temp)
-    #
-    # # Functional Test on Saving
-    # print("Functional Test on Saving")
-    # output_dir = os.path.join(args.output_dir, "checkpoint-0")
-    # if not os.path.exists(output_dir):
-    #     os.makedirs(output_dir)
-    # model_to_save = (
-    #     model.module if hasattr(model, "module") else model
-    # )  # Take care of distributed/parallel training
-    # model_to_save.save_pretrained(output_dir)
-    # torch.save(args, os.path.join(output_dir, "training_args.bin"))
-    # logger.info("Saving model checkpoint to %s", output_dir)
-    # tokenizer.save_vocabulary(output_dir)
-    # # Predict txt result
-    # rep_rule = (('], [', '], \n\n['), ("'), ('", "'), \n('"),
-    #             ("', [('", "', [\n('"), ("')]", "'),\n]"))
-    # list_write_txt(os.path.join(output_dir, "predict_triples_dev.txt"), preds_text_dev, rep_rule=rep_rule)
-    # # torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-    # # torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-    # # logger.info("Saving optimizer and scheduler states to %s", output_dir)
-
     # Train!
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(dataset_train_bertformat))
@@ -319,56 +251,17 @@ def train(args, datas, model, tokenizer):
     time.sleep(3)
     for epoch in range(int(args.num_train_epochs)):  # 常数5
         # Train 1 epoch
-        # pbar = ProgressBar(n_total=len(train_dataloader), desc=f'Training {epoch + 1}-th')
         for step, batch in enumerate(train_dataloader):
             epoch_float = epoch + float(step + 1) / len(train_dataloader)  # 精度更高的 epoch
             if epoch == int(args.num_train_epochs)-1 and step == len(train_dataloader)-1:  # last step
                 last_epoch_step = True
-            # if epoch_float > 2.1:
-            #     print("end for test")
-            #     time.sleep(10)
-            #     exit()
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
                 steps_trained_in_current_epoch -= 1
                 continue
             model.train()
-            # batch = tuple(t.to(args.device) for t in batch)
             for key in list(batch.keys()):
                 batch[key] = batch[key].to(args.device)
-            # real_sent_ids = batch[6]
-            # inputs = {"input_ids": batch[0],
-            #           "attention_mask": batch[1],
-            #           "labels": batch[3],
-            #           'input_lens': batch[4],
-            #           'tag_mask': batch[5]}
-            # if args.model_type != "distilbert":
-            #     # XLM and RoBERTa don"t use segment_ids
-            #     inputs["token_type_ids"] = (batch[2] if args.model_type in ["bert", "xlnet"] else None)
-            """
-            inputs
-                {'input_ids': tensor([[ 101, 2400, 1762, 1400, 7481, 4638, ...],
-                                    [ 101, 1400, 5442, 1156, 3193, 3193, ...],
-                                    [ 101, 3173, 1290, 6568, 5307, 1199, ...],  # 这条最长，其他补[PAD]
-                                    [ 101, 3300, 2692, 3119, 5966,  517, ...]], device='cuda:0'), 
-                'attention_mask': tensor([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...],
-                        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...],
-                        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...],
-                        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...]], device='cuda:0'), 
-                'labels': tensor([[31, 31, 31, 31, 31, ..., 31,  0,  0],
-                        [31, 31, 31, 31, 31, 31, 31, ...,  0,  0],
-                        [31,  3, 13, 13, 13,  9, 19, 19, 31,  9, 19, ...],
-                        [31, 31, 31, 31, 31,  4, 14, 14, 14, 14, 31, ...]], device='cuda:0'), 
-                'input_lens': tensor([45, 41, 47, 23], device='cuda:0'), 
-                'token_type_ids': tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...],
-                        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...],
-                        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...],
-                        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ...]], device='cuda:0')
-                }
-            """
-            # print(step)
-            # print(inputs['input_ids'])
-            # outputs = model(**inputs)  # !!!!!!!!!!!!!!!!!!！！！！！！！！！！！！！！！！！！
             outputs = model(batch)  # !!!!!!!!!!!!!!!!!!！！！！！！！！！！！！！！！！！！
 
             loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
@@ -420,10 +313,6 @@ def train(args, datas, model, tokenizer):
                 eval_flag = 1
 
             # Eval.     每训练一定数量batch，验证1次。
-            # res = {'f1': 0}
-            # if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_batch_step % args.logging_steps == 0:
-            # Log metrics.  logging_step=448, global_step每更新一次参数加1
-            # if args.local_rank in [-1, 0] and (epoch + 1) % args.eval_epochs == 0:
             if args.local_rank in [-1, 0] and eval_flag:
                 logger.info(" ")
                 if args.local_rank == -1:
@@ -454,29 +343,8 @@ def train(args, datas, model, tokenizer):
                         best_res_dev_list = best_res_dev_list[:10]
                     # logger.info("Best: " + str(best_res_dev_list[0]))
 
-                    # # 手动调整学习率
-                    # bert_lr = optimizer.param_groups[0]['lr']
-                    # crf_lr = optimizer.param_groups[2]['lr']
-                    # linear_lr = optimizer.param_groups[4]['lr']
-                    # logger.info("epoch {}-th.  lr: bert={}, crf={}".format(
-                    #     round(epoch_float, 2), '%.3g' % bert_lr, '%.3g' % crf_lr))
-                    # logger.info('train loss: {}'.format(loss.item()))
-
-                    # if lr_down == 1 and res['f1'] > 0.5:
-                    #     lr_down = 1/3
-                    #     optimizer, scheduler = set_optimizer_scheduler(args, model, train_dataloader, lr_down)
-                    #     logger.info("手动更新了学习率，为原来的1/3")
-                    # elif lr_down == 1/3 and res['f1'] > 0.58:
-                    #     lr_down = 1/9
-                    #     optimizer, scheduler = set_optimizer_scheduler(args, model, train_dataloader, lr_down)
-                    #     logger.info("手动更新了学习率，为原来的1/9")
-
             # Save
-            # if args.local_rank in [-1, 0] and args.save_steps > 0 and global_batch_step % args.save_steps == 0 \
-            #         and res['f1'] > 0.40:
-            # if args.local_rank in [-1, 0] and args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0:
             if args.local_rank in [-1, 0] and args.save_epochs > 0 and eval_flag:
-                # Save model checkpoint   save_steps==logging_step(一般)
 
                 # Path
                 epoch_suffix = str(round(epoch_float, 2)).replace(".", "_")
@@ -504,17 +372,10 @@ def train(args, datas, model, tokenizer):
                 rep_rule = (("]]], ['", "], \n]], \n\n['"), (")]], [(", ")]], \n[("), ("', [[(", "', [\n[("),)
                 ##### rep_rule for [id, sent, [[(s,r,o),[sp],[op]], ...]], ...
                 list_write_txt(os.path.join(output_dir, "predict_triples_dev.txt"), preds_text_dev, rep_rule=rep_rule)
-                # list_write_txt(os.path.join(output_dir, "predict_triples_test.txt"), preds_text_test, rep_rule=rep_rule)     jyz chg 2410
-
-                # torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                # torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                # logger.info("Saving optimizer and scheduler states to %s", output_dir)
-            # step loop
 
         logger.info("\n")
         if 'cuda' in str(args.device):
             torch.cuda.empty_cache()
-        # epoch loop
     # logger.info("Best top 10: " + str(best_res_dev_list))  #
     return global_batch_step, tr_loss / global_batch_step
 
@@ -563,9 +424,6 @@ def f1_score_triple(preds, labels):
     f1_micro = 0.0
     if p_micro + r_micro > 0.0:
         f1_micro = 2.0 * p_micro * r_micro / (p_micro + r_micro)
-    # print('  {}/{}, {}/others, {}/{}/{}, "{}"'.format(
-    #     correct_have, gold_have, guess_have_when_gold_no,
-    #     str(p_micro)[:4], str(r_micro)[:4], str(f1_micro)[:4], which_label))
     return p_micro, r_micro, f1_micro
 
 
@@ -594,16 +452,6 @@ class QuickPredFramework:
                 sent=self.sent_origin_list[sent_i],
                 max_token_len=int(args.max_origin_sent_token_len*self.args.max_origin_sent_token_len__eval_ratio))
 
-        # extract_situation = {}
-        # for rela in relation_list:
-        #     extract_situation[rela] = {
-        #         'if_add_to_sample_list': False, 'subj': '[begin]', 'obj': '[begin]',
-        #         'extract_num': 0,
-        #     }
-        #     # '[begin]' 用于指示该关系的抽取起始；'' 指示结束。
-        #     # if_add_to_sample_list 用于避免重复添加
-        #     # exist_num 表示已存在的数量
-        # self.extract_situation_list = [extract_situation.copy() for _ in range(len(self.sent_origin_list))]
         self.extract_situation_list = []
         for sent_id in range(len(self.sent_origin_list)):
             extract_situation = {}
@@ -630,9 +478,6 @@ class QuickPredFramework:
     def _sent_list_update(self):
         # 根据 self.extract_situation_list 的情况更新 self.sent_list（待验证的句子队列）
         for sent_id in range(len(self.sent_origin_list)):
-            # print("")
-            # print(sent_id)
-            # print(self.extract_situation_list)
             for rela in self.relation_list:
                 if self.extract_situation_list[sent_id][rela]['if_add_to_sample_list'] is False and \
                         self.extract_situation_list[sent_id][rela]['subj'] and \
@@ -647,11 +492,6 @@ class QuickPredFramework:
                         self.extract_situation_list[sent_id][rela]['obj'] = ''
                         triple_last = []
 
-                    # sent_prompt = sent_add_prompt(
-                    #     self.sent_origin_list[sent_id], rela,
-                    #     [(self.extract_situation_list[sent_id][rela]['subj'],
-                    #       rela, self.extract_situation_list[sent_id][rela]['obj'])],
-                    #     self.args.max_entity_char_len)
                     sample = {
                         'sent_origin_id': sent_id,
                         'sent_origin': self.sent_origin_list[sent_id],
@@ -689,32 +529,11 @@ class QuickPredFramework:
             for key in list(batch.keys()):
                 batch[key] = batch[key].to(self.args.device)
             with torch.no_grad():
-                # inputs = {
-                #     "input_ids": batch['input_ids'],
-                #     "attention_mask": batch['bert_att_mask'],
-                #     "labels": batch['label_ids'],
-                #     'input_lens': batch['input_len'],
-                #     'tag_mask': batch['tag_mask'],
-                # }
-                # if self.args.model_type != "distilbert":
-                #     # XLM and RoBERTa don"t use segment_ids
-                #     inputs["token_type_ids"] = (batch['segment_ids'] if self.args.model_type in ["bert", "xlnet"] else None)
-                # outputs = model(**inputs)  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                # print('--', batch['input_ids'].size())
                 print_flag = False
-                # if print_i % 1000 == 0:
-                #     print_flag = True
-                # print_i += 1
-                outputs = model(batch, print_flag)
-                # ^^^ (loss, logits).      logits size: [B, seq_len, cls_num]
+                outputs = model(batch, print_flag)  # (loss, logits). logits size: [B, seq_len, cls_num]
                 tmp_eval_loss, logits = outputs[:2]
                 tags = model.logits_decode(logits, batch['tag_mask'])
-                # print(inputs['input_ids'].size())
-                # print(inputs['tag_mask'].size())
-                # print(tags.size())
-            # batch_real_sent_ids = batch[6].cpu().numpy().tolist()
-            # out_inputs_ids = inputs['input_ids'].cpu().numpy().tolist()  # inputs to cpu
-            # out_label_ids = inputs['labels'].cpu().numpy().tolist()  # tag_ids(real_ans) to cpu
+
             out_tag_mask = batch['tag_mask'].cpu().numpy().tolist()  # to cpu
             # input_lens = inputs['input_lens'].cpu().numpy().tolist()  # len    to cpu
             tags = tags.squeeze(0).cpu().numpy().tolist()  # tags(preds) to cpu
@@ -759,11 +578,6 @@ class QuickPredFramework:
 
             if subj and obj and triple_str_pos not in self.sent_origin_triples[sent_id][1]:
                 self.sent_origin_triples[sent_id][1].append(triple_str_pos)  # 添加抽取结果
-                # if "通常用阻塞干扰来衡量接收机抗邻道干扰的能力。" in self.sample_list[data_i]['sent_origin']:
-                #     print("")
-                #     print(f"-- sent: {self.sample_list[data_i]['sent_origin']}")
-                #     print(f"-- model output tag: {all_tags[data_i]}")
-                #     print(f"-- triple after decode: {triple_str_pos}")
 
             # 指示下一轮抽取
             self.extract_situation_list[sent_id][rela]['if_add_to_sample_list'] = False
@@ -778,9 +592,6 @@ class QuickPredFramework:
                 self.extract_situation_list[sent_id][rela]['obj'] = ""
                 self.extract_situation_list[sent_id][rela]['subj_char_pos'] = []
                 self.extract_situation_list[sent_id][rela]['obj_char_pos'] = []
-            # print(len(all_tags))
-            # print(sent_id, rela)
-            # print(self.extract_situation_list[sent_id][rela])
 
     def predict_all(self, dataset_process: Dataset, model):
 
@@ -833,10 +644,6 @@ def main():
     parse = get_argparse()
     args = parse.parse_args()
 
-    # args.do_train = True
-    # args.do_eval = True
-    # args.do_predict_only = False
-    # args.do_predict_only = True
     if args.do_predict_only:
         # 从某文件中读取最优checkpoint
         with open(os.path.join(args.output_dir, "score_triple_complete.json"), 'r', encoding='UTF-8') as file1:
@@ -850,41 +657,17 @@ def main():
 
     if not os.path.exists(args.output_dir):
         os.mkdir(args.output_dir)
-    # args.output_dir = args.output_dir + '{}'.format(args.model_type)
-    # if not os.path.exists(args.output_dir):
-    #     os.mkdir(args.output_dir)
     time_ = time.strftime("%Y-%m-%d-%H-%M", time.localtime())
-    # log_file = args.output_dir + '/{}-{}-{}.log'.format(args.model_type, args.task_name, time_)
     log_file = args.output_dir + '/{}-{}.log'.format(args.model_type, time_)
     if args.do_predict_only:
         log_file = ''
-    # init_logger(log_file=args.output_dir + f'/{args.model_type}-{args.task_name}-{time_}.log')
     init_logger(log_file=log_file)
-    """ logger test
-    logger.info("abc")
-    logger.info("")
-    logger.info("def\n")
-    logger.info("ghi")
-    
-        03/21/2024 21:51:03 - INFO - root -   abc
-        03/21/2024 21:51:03 - INFO - root -   
-        03/21/2024 21:51:03 - INFO - root -   def
-        
-        03/21/2024 21:51:03 - INFO - root -   ghi
-    """
 
     if os.path.exists(args.output_dir) and os.listdir(
             args.output_dir) and args.do_train and not args.overwrite_output_dir:
         raise ValueError(
             "Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(
                 args.output_dir))
-    # # Setup distant debugging if needed
-    # if args.server_ip and args.server_port:
-    #     # Distant debugging - see https://code.visualstudio.com/docs/python/debugging#_attach-to-a-local-script
-    #     import ptvsd
-    #     print("Waiting for debugger attach")
-    #     ptvsd.enable_attach(address=(args.server_ip, args.server_port), redirect_output=True)
-    #     ptvsd.wait_for_attach()
 
     # -------------------- Setup CUDA, GPU & distributed training
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id  # visible gpu
@@ -904,15 +687,9 @@ def main():
         args.local_rank, device, args.n_gpu, bool(args.local_rank != -1), args.fp16, )
     # -------------------- Set seed
     seed_everything(args.seed)
-    # Prepare NER task
-    # args.task_name = args.task_name.lower()
-    # if args.task_name not in processors:
-    #     raise ValueError("Task not found: %s" % (args.task_name))
-    # # processor = processors[args.task_name]()
     args.id2label = {i: label for i, label in enumerate(NER_TAG_LIST)}
     args.label2id = {label: i for i, label in enumerate(NER_TAG_LIST)}
     num_labels = len(NER_TAG_LIST)
-    # print('\n', args)
 
     # -------------------- Load pretrained model and tokenizer
     if args.local_rank not in [-1, 0]:
@@ -999,8 +776,6 @@ def main():
 
     # -------------------- training
     if args.do_train:
-        # print("\ntrain start")
-        # dataset_divide_train_dev()  # 划分训练集和验证集
         global_step, tr_loss = train(
             args, [dataset_train, dataset_dev, dataset_test], model, tokenizer)  # !!!!!!!!!!!!!!!!!!!!!!
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
@@ -1015,10 +790,3 @@ if __name__ == "__main__":
     main()
 
 
-"""
-ssh gpu9
-source ~/.bashrc  ### 初始化环境变量
-source  /opt/app/anaconda3/bin/activate python3_10
-cd /home/u2021110308/jyz_projects/ner_code_2311/ner_code_231117/
-
-"""
